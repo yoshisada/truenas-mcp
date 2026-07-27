@@ -18,14 +18,15 @@ import (
 )
 
 var (
-	truenasURL = flag.String("truenas-url", "", "TrueNAS hostname or WebSocket URL (e.g., 'truenas.local' or 'ws://10.0.0.1/websocket')")
-	apiKey     = flag.String("api-key", "", "TrueNAS API key for middleware authentication")
-	insecure   = flag.Bool("insecure", false, "Disable TLS certificate verification (UNSAFE: allows man-in-the-middle attacks)")
-	tlsCA      = flag.String("tls-ca", "", "Path to a PEM certificate to trust (e.g., the TrueNAS self-signed certificate)")
-	versionFlg = flag.Bool("version", false, "Print version and exit")
-	debug      = flag.Bool("debug", false, "Enable debug logging")
-	transport  = flag.String("transport", "stdio", "Transport protocol: 'stdio' (stdin/stdout) or 'http' (streamable HTTP)")
-	httpAddr   = flag.String("http-addr", ":8080", "HTTP listen address (used with --transport=http)")
+	truenasURL   = flag.String("truenas-url", "", "TrueNAS hostname or WebSocket URL (e.g., 'truenas.local' or 'ws://10.0.0.1/websocket')")
+	apiKey       = flag.String("api-key", "", "TrueNAS API key for middleware authentication")
+	insecure     = flag.Bool("insecure", false, "Disable TLS certificate verification (UNSAFE: allows man-in-the-middle attacks)")
+	tlsCA        = flag.String("tls-ca", "", "Path to a PEM certificate to trust (e.g., the TrueNAS self-signed certificate)")
+	versionFlg   = flag.Bool("version", false, "Print version and exit")
+	debug        = flag.Bool("debug", false, "Enable debug logging")
+	transport    = flag.String("transport", "stdio", "Transport protocol: 'stdio' (stdin/stdout) or 'http' (streamable HTTP)")
+	httpAddr     = flag.String("http-addr", ":8080", "HTTP listen address (used with --transport=http)")
+	disableTools = flag.String("disable-tools", "", "Comma-separated list of tool names to disable (e.g., 'system_reboot,delete_boot_environment')")
 )
 
 // Version is the release version, injected at build time via
@@ -105,7 +106,21 @@ func main() {
 	defer taskManager.Shutdown()
 
 	// Create tool registry
-	registry := tools.NewRegistry(client, taskManager)
+	disabledSet := make(map[string]bool)
+	for _, name := range strings.Split(*disableTools, ",") {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			disabledSet[name] = true
+		}
+	}
+	registry := tools.NewRegistry(client, taskManager, disabledSet)
+	if len(disabledSet) > 0 {
+		names := make([]string, 0, len(disabledSet))
+		for n := range disabledSet {
+			names = append(names, n)
+		}
+		log.Printf("Disabled tools: %s", strings.Join(names, ", "))
+	}
 
 	// Start the selected transport handler
 	switch *transport {

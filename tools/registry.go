@@ -16,6 +16,7 @@ type Registry struct {
 	client      *truenas.Client
 	taskManager *tasks.Manager
 	tools       map[string]Tool
+	disabled    map[string]bool
 }
 
 type Tool struct {
@@ -23,11 +24,15 @@ type Tool struct {
 	Handler    func(*truenas.Client, map[string]interface{}) (string, error)
 }
 
-func NewRegistry(client *truenas.Client, taskManager *tasks.Manager) *Registry {
+func NewRegistry(client *truenas.Client, taskManager *tasks.Manager, disabledTools map[string]bool) *Registry {
 	r := &Registry{
 		client:      client,
 		taskManager: taskManager,
 		tools:       make(map[string]Tool),
+		disabled:    disabledTools,
+	}
+	if r.disabled == nil {
+		r.disabled = make(map[string]bool)
 	}
 	r.registerTools()
 	return r
@@ -1771,13 +1776,19 @@ Returns task_id for tracking progress with tasks_get.
 
 func (r *Registry) ListTools() []mcp.Tool {
 	tools := make([]mcp.Tool, 0, len(r.tools))
-	for _, tool := range r.tools {
+	for name, tool := range r.tools {
+		if r.disabled[name] {
+			continue
+		}
 		tools = append(tools, tool.Definition)
 	}
 	return tools
 }
 
 func (r *Registry) CallTool(name string, args map[string]interface{}) (string, error) {
+	if r.disabled[name] {
+		return "", fmt.Errorf("tool is disabled: %s", name)
+	}
 	tool, exists := r.tools[name]
 	if !exists {
 		return "", fmt.Errorf("unknown tool: %s", name)
