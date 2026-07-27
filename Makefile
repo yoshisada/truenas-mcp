@@ -1,5 +1,3 @@
-.PHONY: build build-all clean test lint
-
 BINARY_NAME=truenas-mcp
 BUILD_DIR=.
 
@@ -7,6 +5,9 @@ BUILD_DIR=.
 # Override with: make build VERSION=1.2.3
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//')
 LDFLAGS = -ldflags "-X main.Version=$(VERSION)"
+
+# Default transport: http for container builds, override with TRANSPORT=stdio
+TRANSPORT ?= http
 
 # Build for local platform
 build:
@@ -25,6 +26,22 @@ build-all:
 	@echo "Building for Windows (AMD64)..."
 	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/truenas-mcp
 	@echo "All builds complete!"
+
+# Build Docker image
+docker:
+	@echo "Building Docker image $(BINARY_NAME):$(VERSION)..."
+	docker build -t $(BINARY_NAME):$(VERSION) .
+	@echo "Tagged as $(BINARY_NAME):$(VERSION)"
+
+# Run locally in HTTP mode (for testing)
+run-http:
+	@echo "Running $(BINARY_NAME) in HTTP mode on :8080..."
+	go run $(LDFLAGS) ./cmd/truenas-mcp --transport=http --http-addr=:8080
+
+# Run locally in stdio mode (for testing)
+run-stdio:
+	@echo "Running $(BINARY_NAME) in stdio mode..."
+	go run $(LDFLAGS) ./cmd/truenas-mcp --transport=stdio
 
 clean:
 	@echo "Cleaning..."

@@ -24,6 +24,8 @@ var (
 	tlsCA      = flag.String("tls-ca", "", "Path to a PEM certificate to trust (e.g., the TrueNAS self-signed certificate)")
 	versionFlg = flag.Bool("version", false, "Print version and exit")
 	debug      = flag.Bool("debug", false, "Enable debug logging")
+	transport  = flag.String("transport", "stdio", "Transport protocol: 'stdio' (stdin/stdout) or 'http' (streamable HTTP)")
+	httpAddr   = flag.String("http-addr", ":8080", "HTTP listen address (used with --transport=http)")
 )
 
 // Version is the release version, injected at build time via
@@ -105,10 +107,20 @@ func main() {
 	// Create tool registry
 	registry := tools.NewRegistry(client, taskManager)
 
-	// Start stdio handler
-	handler := NewStdioHandler(registry, *debug)
-	if err := handler.Run(); err != nil {
-		log.Fatalf("Stdio handler error: %v", err)
+	// Start the selected transport handler
+	switch *transport {
+	case "stdio":
+		handler := NewStdioHandler(registry, *debug)
+		if err := handler.Run(); err != nil {
+			log.Fatalf("Stdio handler error: %v", err)
+		}
+	case "http":
+		handler := NewHTTPServer(registry, *httpAddr, *debug)
+		if err := handler.Run(); err != nil {
+			log.Fatalf("HTTP server error: %v", err)
+		}
+	default:
+		log.Fatalf("Unknown transport: %q (supported: stdio, http)", *transport)
 	}
 }
 
