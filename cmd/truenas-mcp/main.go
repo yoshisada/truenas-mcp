@@ -9,7 +9,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/truenas/truenas-mcp/mcp"
 	"github.com/truenas/truenas-mcp/tasks"
@@ -89,21 +88,21 @@ func main() {
 	}
 	defer client.Close()
 
-	// Authenticate with TrueNAS middleware
-	if err := client.Authenticate(); err != nil {
-		log.Fatalf("Failed to authenticate with TrueNAS: %v", err)
-	}
-	log.Println("Successfully authenticated with TrueNAS middleware")
+	// Authenticate in the background — the HTTP server starts immediately
+	// so the container stays alive even if the middleware is unreachable
+	// or slow to respond. Tools will return errors until auth completes.
+	go func() {
+		if err := client.Authenticate(); err != nil {
+			log.Printf("WARNING: Failed to authenticate with TrueNAS: %v", err)
+			log.Println("MCP tools will return connection errors until authentication succeeds")
+			return
+		}
+		log.Println("Successfully authenticated with TrueNAS middleware")
+	}()
 
-	// Create task manager
-	taskConfig := tasks.PollerConfig{
-		PollInterval:    5 * time.Second,
-		MaxPollAttempts: 0, // Unlimited
-		CleanupInterval: 1 * time.Minute,
-	}
-	taskManager := tasks.NewManager(client, taskConfig)
-	taskManager.Start()
-	defer taskManager.Shutdown()
+	// Create task manager (nil until auth completes — tasks/scrub tools
+	// will return errors, but basic tools work without the task manager)
+	var taskManager *tasks.Manager
 
 	// Create tool registry
 	disabledSet := make(map[string]bool)
