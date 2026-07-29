@@ -10,7 +10,7 @@ RUN CGO_ENABLED=0 go build -ldflags "-s -w -X main.Version=$(git describe --tags
 
 # Stage 2: minimal runtime image
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata docker-cli
 COPY --from=builder /truenas-mcp /usr/local/bin/truenas-mcp
 EXPOSE 8080
 ENTRYPOINT ["truenas-mcp"]
