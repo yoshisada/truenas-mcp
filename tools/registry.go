@@ -1277,6 +1277,30 @@ For IPA: {hostname: "ipa.example.com", domain: "example.com", ...}
 		Handler: handleGetAppConfig,
 	}
 
+	// Get app logs
+	r.tools["get_app_logs"] = Tool{
+		Definition: mcp.Tool{
+			Name:        "get_app_logs",
+			Description: "Fetch Docker container logs for a TrueNAS custom app. Returns recent log output to help debug container crashes or startup issues.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"app_name": map[string]interface{}{
+						"type":        "string",
+						"description": "Name of the installed application to fetch logs for",
+					},
+					"tail_lines": map[string]interface{}{
+						"type":        "integer",
+						"description": "Number of recent log lines to fetch (default: 100)",
+						"default":     100,
+					},
+				},
+				"required": []string{"app_name"},
+			},
+		},
+		Handler: handleGetAppLogs,
+	}
+
 	// Update app
 	r.tools["update_app"] = Tool{
 		Definition: mcp.Tool{
@@ -3916,6 +3940,54 @@ func handleGetAppConfig(client *truenas.Client, args map[string]interface{}) (st
 		return "", err
 	}
 	return string(formatted), nil
+}
+
+// handleGetAppLogs fetches Docker container logs for a TrueNAS custom app
+func handleGetAppLogs(client *truenas.Client, args map[string]interface{}) (string, error) {
+	appName, ok := args["app_name"].(string)
+	if !ok || appName == "" {
+		return "", fmt.Errorf("app_name is required")
+	}
+
+	// Validate app name
+	if err := validateAppName(appName); err != nil {
+		return "", fmt.Errorf("invalid app_name: %v", err)
+	}
+
+	// Extract tail_lines (optional, default 100)
+	tailLines := 100
+	if tl, ok := args["tail_lines"].(float64); ok {
+		tailLines = int(tl)
+	}
+	if tailLines < 1 {
+		tailLines = 100
+	}
+
+	// Call app.logs API
+	result, err := client.Call("app.logs", map[string]interface{}{
+		"app_name":   appName,
+		"tail_lines": tailLines,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to get app logs: %w", err)
+	}
+
+	// Try to parse as JSON first (structured response)
+	var logResponse interface{}
+	if err := json.Unmarshal(result, &logResponse); err == nil {
+		// If it's a string inside JSON, extract it
+		if logStr, ok := logResponse.(string); ok {
+			return logStr, nil
+		}
+		// If it's an object/map, format it nicely
+		formatted, err := json.MarshalIndent(logResponse, "", "  ")
+		if err == nil {
+			return string(formatted), nil
+		}
+	}
+
+	// Return raw text
+	return string(result), nil
 }
 
 // handleUpdateApp performs the actual app.update API call
