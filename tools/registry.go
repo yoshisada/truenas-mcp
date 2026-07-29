@@ -4019,13 +4019,36 @@ func formatLogResult(result json.RawMessage) (string, error) {
 }
 
 // execDockerLogs runs docker logs CLI to fetch container output.
+// Resolves the TrueNAS SCALE auto-generated container name by searching
+// Docker for containers whose name contains the app name.
 func execDockerLogs(appName string, tailLines int) (string, error) {
-	cmd := exec.Command("docker", "logs", "--tail", fmt.Sprintf("%d", tailLines), appName)
-	output, err := cmd.CombinedOutput()
+	// First, find the actual container name via docker ps filter.
+	// TrueNAS SCALE auto-generates names like ix-prometheus-... or ix-<app>-....
+	findCmd := exec.Command("docker", "ps",
+		"--filter", fmt.Sprintf("name=%s", appName),
+		"--format", "{{.Names}}")
+	output, err := findCmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("docker logs failed: %w\nOutput: %s", err, string(output))
+		return "", fmt.Errorf("docker ps failed: %w", err)
 	}
-	return string(output), nil
+
+	containerName := strings.TrimSpace(string(output))
+	if containerName == "" {
+		return "", fmt.Errorf("no running container found matching app name %q", appName)
+	}
+
+	// If multiple containers match (e.g., compose project), take the first line.
+	if idx := strings.Index(containerName, "\n"); idx != -1 {
+		containerName = containerName[:idx]
+	}
+
+	// Now fetch logs using the resolved container name.
+	logCmd := exec.Command("docker", "logs", "--tail", fmt.Sprintf("%d", tailLines), containerName)
+	logOutput, err := logCmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("docker logs failed for container %q: %w\nOutput: %s", containerName, err, string(logOutput))
+	}
+	return string(logOutput), nil
 }
 
 // handleUpdateApp performs the actual app.update API call
