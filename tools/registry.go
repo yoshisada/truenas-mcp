@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -3942,7 +3943,9 @@ func handleGetAppConfig(client *truenas.Client, args map[string]interface{}) (st
 	return string(formatted), nil
 }
 
-// handleGetAppLogs fetches Docker container logs for a TrueNAS custom app
+// handleGetAppLogs fetches Docker container logs for a TrueNAS custom app.
+// Tries multiple middleware methods in a fallback chain, then falls back to
+// the Docker CLI (docker logs) if the container has access to the Docker socket.
 func handleGetAppLogs(client *truenas.Client, args map[string]interface{}) (string, error) {
 	appName, ok := args["app_name"].(string)
 	if !ok || appName == "" {
@@ -3963,16 +3966,42 @@ func handleGetAppLogs(client *truenas.Client, args map[string]interface{}) (stri
 		tailLines = 100
 	}
 
-	// Call app.logs API
-	result, err := client.Call("app.logs", map[string]interface{}{
-		"app_name":   appName,
-		"tail_lines": tailLines,
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to get app logs: %w", err)
+	// Try middleware methods in order of likelihood.
+	// On TrueNAS SCALE 25.x (Docker Compose-based), the app middleware
+	// may use any of these for fetching container logs.
+	methods := []string{
+		"app.container_logs",
+		"app.instance_logs",
+		"app.pod_logs",
+		"container.logs",
 	}
 
-	// Try to parse as JSON first (structured response)
+	var lastErr error
+	for _, method := range methods {
+		result, err := client.Call(method, map[string]interface{}{
+			"app_name":   appName,
+			"tail_lines": tailLines,
+		})
+		if err == nil {
+			return formatLogResult(result)
+		}
+		lastErr = err
+	}
+
+	// Fallback: try Docker CLI via os/exec.
+	// This works when the MCP container has the Docker socket mounted
+	// and the docker binary is available on PATH.
+	if result, err := execDockerLogs(appName, tailLines); err == nil {
+		return result, nil
+	} else {
+		lastErr = err
+	}
+
+	return "", fmt.Errorf("failed to get app logs via any method: %w", lastErr)
+}
+
+// formatLogResult parses and formats log output from a middleware response.
+func formatLogResult(result json.RawMessage) (string, error) {
 	var logResponse interface{}
 	if err := json.Unmarshal(result, &logResponse); err == nil {
 		// If it's a string inside JSON, extract it
@@ -3985,9 +4014,18 @@ func handleGetAppLogs(client *truenas.Client, args map[string]interface{}) (stri
 			return string(formatted), nil
 		}
 	}
-
 	// Return raw text
 	return string(result), nil
+}
+
+// execDockerLogs runs docker logs CLI to fetch container output.
+func execDockerLogs(appName string, tailLines int) (string, error) {
+	cmd := exec.Command("docker", "logs", "--tail", fmt.Sprintf("%d", tailLines), appName)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("docker logs failed: %w\nOutput: %s", err, string(output))
+	}
+	return string(output), nil
 }
 
 // handleUpdateApp performs the actual app.update API call
